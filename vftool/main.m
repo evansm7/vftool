@@ -1,9 +1,12 @@
-//
-//  main.m
-//  vftool
-//
-//  Created by Matt Evans on 24/11/2020.
-//
+/*
+ * vftool
+ *
+ * A minimalist wrapper for Virtualization.framework
+ *
+ * (c) 2020 Matt Evans
+ *
+ * Licence = MIT
+ */
 
 #import <Foundation/Foundation.h>
 #import <Virtualization/Virtualization.h>
@@ -18,8 +21,8 @@
 #include <poll.h>
 #include <util.h>
 
-
 #define VERSION "v0.1 25/11/2020"
+
 
 /* ******************************************************************** */
 /* PTY management*/
