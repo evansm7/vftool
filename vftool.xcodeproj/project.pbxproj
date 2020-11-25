@@ -26,7 +26,6 @@
 		C9280336256D5D4C00F89123 /* vftool */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = vftool; sourceTree = BUILT_PRODUCTS_DIR; };
 		C9280339256D5D4C00F89123 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		C9280343256D73D800F89123 /* vftool.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = vftool.entitlements; sourceTree = "<group>"; };
-		C960669A256EB21200716743 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -61,7 +60,6 @@
 			children = (
 				C9280343256D73D800F89123 /* vftool.entitlements */,
 				C9280339256D5D4C00F89123 /* main.m */,
-				C960669A256EB21200716743 /* README.md */,
 			);
 			path = vftool;
 			sourceTree = "<group>";
