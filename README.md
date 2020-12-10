@@ -18,7 +18,15 @@ This is _not a GUI-based app_, and this configuration is provided on the command
 
 
 ## Building
-Build in Xcode.  It should be one click, though you may have to set up your (free) developer ID/AppleID developer Team in the "Signing & Capabilities" tab of the project configuration.
+
+### In Xcode
+It should be one click, though you may have to set up your (free) developer ID/AppleID developer Team in the "Signing & Capabilities" tab of the project configuration.
+
+### Or, from the commandline
+
+Install the commandline tools (or Xcode proper) and run `make`.
+
+This results in `build/vftool`.  The Makefile applies a code signature and required entitlements without an identity, which should be enough to run on your own machine.  I haven't tested whether this binary will then work on other people's machines.
 
 
 ## Running
