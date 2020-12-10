@@ -7,7 +7,7 @@ Vftool runs Linux virtual machines with virtio block, network, entropy and conso
 It's intended to be the simplest possible invocation of this framework, whilst allowing configuration for:
 - Amount of memory
 - Number of VCPUs
-- Attached disc image, CDROM image (AKA a read-only disc image), or neither
+- Attached disc images, CDROM images (AKA a read-only disc image), or neither
 - Initrd, or no initrd)
 - kernel
 - kernel commandline
@@ -47,6 +47,8 @@ The following command-line arguments are supported:
 Only the `-k` argument is required (for a path to the kernel image), and all other arguments are optional.  The (current) default is 1 CPU, 512MB RAM, "console=hvc0", NAT-based networking, no discs or initrd and creates a pty for the console.
 
 The `-t` option permits the console to either use stdin/stdout (option `0`), or to create a pseudo terminal (option `1`, the default) and wait for you to attach something to it, as in the example below.  The pseudo terminal (pty) approach gives a useful interactive console (particularly handy for setting up your VM), but stdin/stdout and immediate startup are more useful for launching VMs in a script.
+
+Multiple disc images can be attached by using several `-d` or `-c` options.  The discs are attached in the order they are given on the command line, which should then influence which device they appear as.  For example, `-d foo -d bar -c blah` will create three virtio-blk devices, `/dev/vda`, `/dev/vdb`, `/dev/vdc` attached to _foo_, _bar_ and _blah_ respectively.  Up to 8 discs can be attached.
 
 The kernel should be uncompressed.  The initrd may be a gz.  Disc images are raw/flat files (nothing fancy like qcow2).
 

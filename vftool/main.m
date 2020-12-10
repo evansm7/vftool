@@ -21,7 +21,14 @@
 #include <poll.h>
 #include <util.h>
 
-#define VERSION "v0.2 10/12/2020"
+#define VERSION "v0.3 10/12/2020"
+
+#define MAX_DISCS   8
+
+struct disc_info {
+    NSString    *path;
+    bool        readOnly;
+};
 
 /* ******************************************************************** */
 /* PTY management*/
@@ -87,8 +94,8 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
                                                   NSString *cmdline,
                                                   NSString *kernel_path,
                                                   NSString *initrd_path,
-                                                  NSString *disc_path,
-                                                  NSString *cdrom_path,
+                                                  struct disc_info *dinfo,
+                                                  unsigned int num_discs,
                                                   NSString *bridged_eth)
 {
     /* **************************************************************** */
@@ -101,12 +108,6 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
 
     if (initrd_path)
         initrdURL = [NSURL fileURLWithPath:initrd_path];
-
-    if (disc_path)
-        discURL = [NSURL fileURLWithPath:disc_path];
-
-    if (cdrom_path)
-        cdromURL = [NSURL fileURLWithPath:cdrom_path];
 
     NSLog(@"+++ kernel at %@, initrd at %@, cmdline '%@', %u cpus, %uMB memory\n",
           kernel_path, initrd_path, cmdline, nr_cpus, mem_size_mb);
@@ -190,31 +191,20 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
     // Storage/disc
     NSArray *discs = @[];
 
-    if (discURL) {
+    for (unsigned int i = 0; i < num_discs; i++) {
+        NSString *disc_path = dinfo[i].path;
+        NSURL *discURL = [NSURL fileURLWithPath:disc_path];
         NSLog(@"+++ Attaching disc %@\n", disc_path);
+
         VZDiskImageStorageDeviceAttachment *disc_sda = [[VZDiskImageStorageDeviceAttachment alloc]
                                                         initWithURL:discURL
-                                                        readOnly:false error:nil];
+                                                        readOnly:dinfo[i].readOnly error:nil];
         if (disc_sda) {
             VZStorageDeviceConfiguration *disc_conf = [[VZVirtioBlockDeviceConfiguration alloc]
                                                        initWithAttachment:disc_sda];
             discs = [discs arrayByAddingObject:disc_conf];
         } else {
-            NSLog(@"--- Couldn't open disc at %@ (URL %@)\n", disc_path, discURL);
-        }
-    }
-
-    if (cdromURL) {
-        NSLog(@"+++ Attaching CDROM %@\n", cdrom_path);
-        VZDiskImageStorageDeviceAttachment *cdrom_sda = [[VZDiskImageStorageDeviceAttachment alloc]
-                                                         initWithURL:cdromURL
-                                                         readOnly:true error:nil];
-        if (cdrom_sda) {
-            VZStorageDeviceConfiguration *cdrom_conf = [[VZVirtioBlockDeviceConfiguration alloc]
-                                                        initWithAttachment:cdrom_sda];
-            discs = [discs arrayByAddingObject:cdrom_conf];
-        } else {
-            NSLog(@"--- Couldn't open disc at %@ (URL %@)\n", cdrom_path, cdromURL);
+            NSLog(@"--- Couldn't open disc%d at %@ (URL %@)\n", i, disc_path, discURL);
         }
     }
 
@@ -226,18 +216,20 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
 
 static void usage(const char *me)
 {
-    fprintf(stderr, "Syntax:\n\t%s <options>\n\n"
-                    "Options are:\n"
-                    "\t-k <kernel path> [REQUIRED]\n"
+    fprintf(stderr, "vftool version " VERSION "\n\n"
+                    "Syntax:\n\t%s <options>\n\n"
+                    "Options:\n"
+                    "\t-k <kernel path>                 [REQUIRED]\n"
                     "\t-a <kernel cmdline arguments>\n"
                     "\t-i <initrd path>\n"
                     "\t-d <disc image path>\n"
-                    "\t-c <CDROM image path>    (As -d, but read-only)\n"
-                    "\t-b <bridged ethernet interface> [otherwise NAT]\n"
-                    "\t-p <number of processors>\n"
-                    "\t-m <memory size in MB>\n"
-                    "\t-t <tty type>    (0 = stdio, 1 = pty (default))\n",
-                    me);
+                    "\t-c <CDROM image path>            (As -d, but read-only)\n"
+                    "\t-b <bridged ethernet interface>  (Default NAT)\n"
+                    "\t-p <number of processors>        (Default 1)\n"
+                    "\t-m <memory size in MB>           (Default 512MB)\n"
+                    "\t-t <tty type>                    (0 = stdio, 1 = pty (default))\n"
+                    "\n\tSpecify multiple discs with multiple -d/-c options, in order (max %d)\n",
+                    me, MAX_DISCS);
 }
 
 
@@ -254,6 +246,9 @@ int main(int argc, char *argv[])
         unsigned int mem = 0;
         unsigned int tty_type = 1;
 
+        struct disc_info dinfo[MAX_DISCS];
+        unsigned int num_discs = 0;
+
         int ch;
         while ((ch = getopt(argc, argv, "k:a:i:d:c:b:p:m:t:h")) != -1) {
             switch (ch) {
@@ -267,10 +262,15 @@ int main(int argc, char *argv[])
                     initrd_path = [NSString stringWithUTF8String:optarg];
                     break;
                 case 'd':
-                    disc_path = [NSString stringWithUTF8String:optarg];
-                    break;
                 case 'c':
-                    cdrom_path = [NSString stringWithUTF8String:optarg];
+                    if (num_discs > MAX_DISCS-1) {
+                        usage(argv[0]);
+                        fprintf(stderr, "\nError: Too many discs specified (max %d)\n\n", MAX_DISCS);
+                        return 1;
+                    }
+                    dinfo[num_discs].path = [NSString stringWithUTF8String:optarg];
+                    dinfo[num_discs].readOnly = (ch == 'c');
+                    num_discs++;
                     break;
                 case 'b':
                     eth_if = [NSString stringWithUTF8String:optarg];
@@ -285,7 +285,7 @@ int main(int argc, char *argv[])
                     tty_type = atoi(optarg);
                     if (tty_type > 1) {
                         usage(argv[0]);
-                        fprintf(stderr, "\n--- Unknown tty type %d!\n", tty_type);
+                        fprintf(stderr, "\nError: Unknown tty type %d\n\n", tty_type);
                         return 1;
                     }
                     break;
@@ -299,7 +299,7 @@ int main(int argc, char *argv[])
 
         if (!kern_path) {
             usage(argv[0]);
-            fprintf(stderr, "\n--- Need kernel path!\n");
+            fprintf(stderr, "\nError: Need a kernel path!\n\n");
             return 1;
         }
 
@@ -322,7 +322,7 @@ int main(int argc, char *argv[])
 
         VZVirtualMachineConfiguration *conf = getVMConfig(mem, cpus, tty_type, cmdline,
                                                           kern_path, initrd_path,
-                                                          disc_path, cdrom_path,
+                                                          dinfo, num_discs,
                                                           eth_if);
  
         if (!conf) {
