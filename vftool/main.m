@@ -21,8 +21,7 @@
 #include <poll.h>
 #include <util.h>
 
-#define VERSION "v0.1 25/11/2020"
-
+#define VERSION "v0.2 10/12/2020"
 
 /* ******************************************************************** */
 /* PTY management*/
@@ -81,7 +80,7 @@ static int createPty(bool waitForConnection)
 /* Build VM config.  Returns a VZVirtualMachineConfiguration object* which
  * needs to be externally validated.  Like many of us.
  */
-static VZVirtualMachineConfiguration *getVMConfig(unsigned long mem_size_mb,
+static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
                                                   unsigned int nr_cpus,
                                                   /* 0 stdout/in, 1 pty */
                                                   unsigned int console_type,
@@ -109,8 +108,8 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned long mem_size_mb,
     if (cdrom_path)
         cdromURL = [NSURL fileURLWithPath:cdrom_path];
 
-    NSLog(@"+++ kernel at %@, initrd at %@, cmdline '%@', %d cpus, %luMB memory\n",
-          kernelURL, initrdURL, cmdline, nr_cpus, mem_size_mb);
+    NSLog(@"+++ kernel at %@, initrd at %@, cmdline '%@', %u cpus, %uMB memory\n",
+          kernel_path, initrd_path, cmdline, nr_cpus, mem_size_mb);
 
     VZLinuxBootLoader *lbl = [[VZLinuxBootLoader alloc] initWithKernelURL:kernelURL];
     [lbl setCommandLine:cmdline];
@@ -192,7 +191,7 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned long mem_size_mb,
     NSArray *discs = @[];
 
     if (discURL) {
-        NSLog(@"+++ Attaching disc %@\n", discURL);
+        NSLog(@"+++ Attaching disc %@\n", disc_path);
         VZDiskImageStorageDeviceAttachment *disc_sda = [[VZDiskImageStorageDeviceAttachment alloc]
                                                         initWithURL:discURL
                                                         readOnly:false error:nil];
@@ -201,12 +200,12 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned long mem_size_mb,
                                                        initWithAttachment:disc_sda];
             discs = [discs arrayByAddingObject:disc_conf];
         } else {
-            NSLog(@"--- Couldn't open disc at %@\n", discURL);
+            NSLog(@"--- Couldn't open disc at %@ (URL %@)\n", disc_path, discURL);
         }
     }
 
     if (cdromURL) {
-        NSLog(@"+++ Attaching CDROM %@\n", cdromURL);
+        NSLog(@"+++ Attaching CDROM %@\n", cdrom_path);
         VZDiskImageStorageDeviceAttachment *cdrom_sda = [[VZDiskImageStorageDeviceAttachment alloc]
                                                          initWithURL:cdromURL
                                                          readOnly:true error:nil];
@@ -215,7 +214,7 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned long mem_size_mb,
                                                         initWithAttachment:cdrom_sda];
             discs = [discs arrayByAddingObject:cdrom_conf];
         } else {
-            NSLog(@"--- Couldn't open disc at %@\n", discURL);
+            NSLog(@"--- Couldn't open disc at %@ (URL %@)\n", cdrom_path, cdromURL);
         }
     }
 
@@ -233,10 +232,11 @@ static void usage(const char *me)
                     "\t-a <kernel cmdline arguments>\n"
                     "\t-i <initrd path>\n"
                     "\t-d <disc image path>\n"
-                    "\t-c <CDROM image path>\n"
+                    "\t-c <CDROM image path>    (As -d, but read-only)\n"
                     "\t-b <bridged ethernet interface> [otherwise NAT]\n"
                     "\t-p <number of processors>\n"
-                    "\t-m <memory size in MB>\n",
+                    "\t-m <memory size in MB>\n"
+                    "\t-t <tty type>    (0 = stdio, 1 = pty (default))\n",
                     me);
 }
 
@@ -244,24 +244,62 @@ static void usage(const char *me)
 int main(int argc, char *argv[])
 {
     @autoreleasepool {
-        NSUserDefaults *standardDefaults = [NSUserDefaults standardUserDefaults];
+        NSString *kern_path = NULL;
+        NSString *cmdline = NULL;
+        NSString *initrd_path = NULL;
+        NSString *disc_path = NULL;
+        NSString *cdrom_path = NULL;
+        NSString *eth_if = NULL;
+        unsigned int cpus = 0;
+        unsigned int mem = 0;
+        unsigned int tty_type = 1;
 
-        if (argc == 1) {
-            usage(argv[0]);
-            return 1;
+        int ch;
+        while ((ch = getopt(argc, argv, "k:a:i:d:c:b:p:m:t:h")) != -1) {
+            switch (ch) {
+                case 'k':
+                    kern_path = [NSString stringWithUTF8String:optarg];
+                    break;
+                case 'a':
+                    cmdline = [NSString stringWithUTF8String:optarg];
+                    break;
+                case 'i':
+                    initrd_path = [NSString stringWithUTF8String:optarg];
+                    break;
+                case 'd':
+                    disc_path = [NSString stringWithUTF8String:optarg];
+                    break;
+                case 'c':
+                    cdrom_path = [NSString stringWithUTF8String:optarg];
+                    break;
+                case 'b':
+                    eth_if = [NSString stringWithUTF8String:optarg];
+                    break;
+                case 'p':
+                    cpus = atoi(optarg);
+                    break;
+                case 'm':
+                    mem = atoi(optarg);
+                    break;
+                case 't':
+                    tty_type = atoi(optarg);
+                    if (tty_type > 1) {
+                        usage(argv[0]);
+                        fprintf(stderr, "\n--- Unknown tty type %d!\n", tty_type);
+                        return 1;
+                    }
+                    break;
+
+                case 'h':
+                default:
+                    usage(argv[0]);
+                    return 1;
+            }
         }
-        NSString *kern_path = [standardDefaults stringForKey:@"k"];
-        NSString *cmdline = [standardDefaults stringForKey:@"a"];
-        NSString *initrd_path = [standardDefaults stringForKey:@"i"];
-        NSString *disc_path = [standardDefaults stringForKey:@"d"];
-        NSString *cdrom_path = [standardDefaults stringForKey:@"c"];
-        NSString *eth_if = [standardDefaults stringForKey:@"b"];
-        NSInteger cpus = [standardDefaults integerForKey:@"p"];
-        NSInteger mem = [standardDefaults integerForKey:@"m"];
 
         if (!kern_path) {
-            fprintf(stderr, "--- Need kernel path!\n");
             usage(argv[0]);
+            fprintf(stderr, "\n--- Need kernel path!\n");
             return 1;
         }
 
@@ -282,7 +320,7 @@ int main(int argc, char *argv[])
         /* **************************************************************** */
         // Create config
 
-        VZVirtualMachineConfiguration *conf = getVMConfig(mem, (int)cpus, 1, cmdline,
+        VZVirtualMachineConfiguration *conf = getVMConfig(mem, cpus, tty_type, cmdline,
                                                           kern_path, initrd_path,
                                                           disc_path, cdrom_path,
                                                           eth_if);

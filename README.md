@@ -41,9 +41,12 @@ The following command-line arguments are supported:
     -b <bridged ethernet interface>
     -p <number of processors>
     -m <memory size in MB>
+    -t <tty type>
 ~~~
 
-Only the `-k` argument is required (for a path to the kernel image), and all other arguments are optional.  The (current) default is 1 CPU, 512MB RAM, "console=hvc0", NAT-based networking and no discs or initrd.
+Only the `-k` argument is required (for a path to the kernel image), and all other arguments are optional.  The (current) default is 1 CPU, 512MB RAM, "console=hvc0", NAT-based networking, no discs or initrd and creates a pty for the console.
+
+The `-t` option permits the console to either use stdin/stdout (option `0`), or to create a pseudo terminal (option `1`, the default) and wait for you to attach something to it, as in the example below.  The pseudo terminal (pty) approach gives a useful interactive console (particularly handy for setting up your VM), but stdin/stdout and immediate startup are more useful for launching VMs in a script.
 
 The kernel should be uncompressed.  The initrd may be a gz.  Disc images are raw/flat files (nothing fancy like qcow2).
 
@@ -83,11 +86,6 @@ I've used a plain/defconfig Linux 5.9 build (not gzipped):
 Note that Virtualization.framework provides all IO as virtio-pci, including the console (i.e. not a UART).  The debian install kernel does not have virtio drivers, unfortunately.  I ended up using debootstrap (`--foreign`) to install to a disc image on a Linux box... but I hear good things about Fedora etc.
 
 
-## FIXME
-
-Code-wise ... I've used the Objective-C Foundation configuation stuff rather than getopt, bizarrely (I had used getopt but was seeing weird return values and my Objective-C environment confidence wasn't high enough to call it a bug).  I may move it to use getopt again in future.
-
-
 ## Networking and entitlements
 
 The `-b` option uses a `VZBridgedNetworkDeviceAttachment` to configure a bridged network interface instead of the default 'NAT' interface.  *This does not currently work*.
@@ -100,6 +98,11 @@ The bridging requires the binary to have the  `com.apple.vm.networking` entitlem
 This seems to be saying that one requires a paid developer account *and* to ask nicely to be able to use this OS feature.  (Rolls eyes)
 
 Fortunately, the "NAT" default works fine for the outgoing direction, and even permits *incoming* connections -- it appears to be kernel-level NAT from a bridged interface instead of the user-level TCP/IP stuff as used in QEMU.  I end up with a host-side `bridge100` network interface with IP `192.168.64.1` and my guests get `192.168.64.x` addresses which are reachable from the host.  So, at least one can SSH/VNC into guests!
+
+
+## Issues
+
+Folks have reported problems (I believe with the pty setup) when running in tmux.
 
 
 ## References
