@@ -337,7 +337,7 @@ int main(int argc, char *argv[])
         [conf validateWithError:&confErr];
 
         if (confErr) {
-            NSLog(@"-- Configuration vaildation failure! %@\n", confErr);
+            NSLog(@"-- Configuration validation failure! %@\n", confErr);
             return 1;
         }
         NSLog(@"+++ Configuration validated.\n");
