@@ -87,6 +87,25 @@ I've used a plain/defconfig Linux 5.9 build (not gzipped):
 
 Note that Virtualization.framework provides all IO as virtio-pci, including the console (i.e. not a UART).  The debian install kernel does not have virtio drivers, unfortunately.  I ended up using debootstrap (`--foreign`) to install to a disc image on a Linux box... but I hear good things about Fedora etc.
 
+### For Debian Users
+
+Debian provides [Debian Official Cloud Images](https://cdimage.debian.org/images/cloud/), we can use some tricks to make it work for us.
+* Download file like `debian-10-generic-arm64-20210329-591.tar.xz` in sub-directory `buster`.
+* Extract it to a disk image file which include necessary kernel & initramfs file. 
+    * Execute `hdiutil attach -imagekey diskimage-class=CRawDiskImage -nomount /path/to/diskfile` to attach the diskfile.It will return the locations of partitions.So we can use `ext4fuse` or `fuse-ext2` to browse those partitions.
+    * Another way is use docker, we can refer to the following commands to extract files in docker,and all /boot files will appears in `pwd`/boot
+    ```
+    docker run --rm --privileged \
+    -v /path/to/diskfile:/debian.img \
+    -v `pwd`/boot:/boot \
+    --entrypoint 'bash' \
+    debian \
+    -c "mount -o loop,offset=\$(fdisk -l /debian-10.img | fgrep 'Linux filesystem' | awk '{print \$2*512}') /debian.img /root;cp -r /root/boot/* /boot/"
+    ```
+* Now we can use use vmlinuz as kernel file and use initrd as initramfs file.
+> But you may notice that the VM cannot boot, because the kernel does not have a built-in virtio-console driver by default, but we specify hvc0 as the console output in the kernel cmdline, which causes the kernel to stop loading, so a simple addition of kernel cmdline console=tty0 will allow the kernel to output to tty0, which exists but cannot be seen by us, and allow the kernel to continue booting.
+* The final kernel cmdline would be `-a "console=tty0 console=hvc0 root=/dev/vda1 ds=nocloud"`
+> The `ds=nocloud` parameter means using `NoCloud DataSource` for cloud-init to initialize the VM.
 
 ## Networking and entitlements
 
