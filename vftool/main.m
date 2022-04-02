@@ -96,7 +96,8 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
                                                   NSString *initrd_path,
                                                   struct disc_info *dinfo,
                                                   unsigned int num_discs,
-                                                  NSString *bridged_eth)
+                                                  NSString *bridged_eth,
+                                                  NSString *user_macaddr)
 {
     /* **************************************************************** */
     /* Linux bootloader setup:
@@ -179,6 +180,12 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
     }
     
     VZVirtioNetworkDeviceConfiguration *net_conf = [[VZVirtioNetworkDeviceConfiguration alloc] init];
+    // set user defined mac address
+    if (user_macaddr) {
+        VZMACAddress *nma = nil;
+        nma = [[VZMACAddress alloc] initWithString:user_macaddr];
+        [(VZVirtioNetworkDeviceConfiguration *)net_conf setMACAddress:[(VZMACAddress *)nma copy]];
+    }
     [net_conf setAttachment:nda];
     [conf setNetworkDevices:@[net_conf]];
     
@@ -228,6 +235,7 @@ static void usage(const char *me)
                     "\t-p <number of processors>        (Default 1)\n"
                     "\t-m <memory size in MB>           (Default 512MB)\n"
                     "\t-t <tty type>                    (0 = stdio, 1 = pty (default))\n"
+                    "\t-r <mac address>                 (Default random)\n"
                     "\n\tSpecify multiple discs with multiple -d/-c options, in order (max %d)\n",
                     me, MAX_DISCS);
 }
@@ -242,6 +250,7 @@ int main(int argc, char *argv[])
         NSString *disc_path = NULL;
         NSString *cdrom_path = NULL;
         NSString *eth_if = NULL;
+        NSString *user_macaddr = NULL;
         unsigned int cpus = 0;
         unsigned int mem = 0;
         unsigned int tty_type = 1;
@@ -250,7 +259,7 @@ int main(int argc, char *argv[])
         unsigned int num_discs = 0;
 
         int ch;
-        while ((ch = getopt(argc, argv, "k:a:i:d:c:b:p:m:t:h")) != -1) {
+        while ((ch = getopt(argc, argv, "k:a:i:d:c:b:p:m:t:r:h")) != -1) {
             switch (ch) {
                 case 'k':
                     kern_path = [NSString stringWithUTF8String:optarg];
@@ -289,7 +298,10 @@ int main(int argc, char *argv[])
                         return 1;
                     }
                     break;
-
+                case 'r':
+                    user_macaddr = [NSString stringWithUTF8String:optarg];
+                    break;
+                    
                 case 'h':
                 default:
                     usage(argv[0]);
@@ -323,7 +335,7 @@ int main(int argc, char *argv[])
         VZVirtualMachineConfiguration *conf = getVMConfig(mem, cpus, tty_type, cmdline,
                                                           kern_path, initrd_path,
                                                           dinfo, num_discs,
-                                                          eth_if);
+                                                          eth_if, user_macaddr);
  
         if (!conf) {
             NSLog(@"Couldn't create configuration for VM.\n");
