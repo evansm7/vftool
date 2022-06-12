@@ -25,6 +25,8 @@
 
 #define MAX_DISCS   8
 
+const uint8_t GZ_MAGIC[] = {0x1f, 0x8b};
+
 struct disc_info {
     NSString    *path;
     bool        readOnly;
@@ -112,6 +114,24 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
     NSLog(@"+++ kernel at %@, initrd at %@, cmdline '%@', %u cpus, %uMB memory\n",
           kernel_path, initrd_path, cmdline, nr_cpus, mem_size_mb);
 
+    /* Read the 'magic number' from the kernel file to see if it is compressed.
+     * The VZLinuxBootLoader will fail with 'Virtual Machine failed to start' with a compressed kernel.
+     */
+    {
+        NSInputStream *kernelStream = [NSInputStream inputStreamWithURL:kernelURL];
+        uint8_t magic[sizeof(GZ_MAGIC)];
+        [kernelStream open];
+        if ([kernelStream hasBytesAvailable]) {
+            long len = [kernelStream read:magic maxLength:sizeof(magic)];
+            [kernelStream close];
+
+            if (len == sizeof(GZ_MAGIC) && memcmp(GZ_MAGIC, magic, sizeof(magic)) == 0) {
+                fprintf(stderr, "\nError: This kernel is compressed; an uncompressed kernel is required!\n\n");
+                return nil;
+            }
+        }
+    }
+    
     VZLinuxBootLoader *lbl = [[VZLinuxBootLoader alloc] initWithKernelURL:kernelURL];
     [lbl setCommandLine:cmdline];
     if (initrdURL)
