@@ -24,9 +24,16 @@
 #define VERSION "v0.3 10/12/2020"
 
 #define MAX_DISCS   8
-
+#define MAX_SHARES  8
+ 
 struct disc_info {
     NSString    *path;
+    bool        readOnly;
+};
+
+struct share_info {
+    NSString    *path;     // Path on host system
+    NSString    *tag;      // Tag on guest system
     bool        readOnly;
 };
 
@@ -96,6 +103,8 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
                                                   NSString *initrd_path,
                                                   struct disc_info *dinfo,
                                                   unsigned int num_discs,
+                                                  struct share_info *sinfo,
+                                                  unsigned int num_shares,
                                                   NSString *bridged_eth)
 {
     /* **************************************************************** */
@@ -210,6 +219,27 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
 
     [conf setStorageDevices:discs];
 
+    // Shared directories
+    NSArray *shares = @[];
+
+    for (unsigned int i = 0; i < num_shares; i++) {
+        NSLog(@"+++ Attaching shared directory '%@' with tag '%@' with readOnly=%@ \n",
+                sinfo[i].path, sinfo[i].tag, sinfo[i].readOnly ? @"YES" : @"NO");
+        NSURL *shareURL = [NSURL fileURLWithPath:sinfo[i].path];
+        VZSharedDirectory *sharedDirectory = [[VZSharedDirectory alloc]
+                                              initWithURL: shareURL
+                                              readOnly: sinfo[i].readOnly];
+
+        VZSingleDirectoryShare *singleDirectoryShare = [[VZSingleDirectoryShare alloc]
+                                                        initWithDirectory: sharedDirectory];
+
+        VZVirtioFileSystemDeviceConfiguration *share_conf = [[VZVirtioFileSystemDeviceConfiguration alloc]
+                                                              initWithTag: sinfo[i].tag];
+        share_conf.share = singleDirectoryShare;
+        shares = [shares arrayByAddingObject:share_conf];
+    }
+    [conf setDirectorySharingDevices:shares];
+
     return conf;
 }
 
@@ -219,17 +249,19 @@ static void usage(const char *me)
     fprintf(stderr, "vftool version " VERSION "\n\n"
                     "Syntax:\n\t%s <options>\n\n"
                     "Options:\n"
-                    "\t-k <kernel path>                 [REQUIRED]\n"
+                    "\t-k <kernel path>                         [REQUIRED]\n"
                     "\t-a <kernel cmdline arguments>\n"
                     "\t-i <initrd path>\n"
                     "\t-d <disc image path>\n"
-                    "\t-c <CDROM image path>            (As -d, but read-only)\n"
-                    "\t-b <bridged ethernet interface>  (Default NAT)\n"
-                    "\t-p <number of processors>        (Default 1)\n"
-                    "\t-m <memory size in MB>           (Default 512MB)\n"
-                    "\t-t <tty type>                    (0 = stdio, 1 = pty (default))\n"
+                    "\t-c <CDROM image path>                    (As -d, but read-only)\n"
+                    "\t-s <shared dir path>[:<tag>[:{ro, rw}]]  (default tag: dir name,\n"
+                    "\t                                          default mode: read/write, at most %d shares) \n"
+                    "\t-b <bridged ethernet interface>          (Default NAT)\n"
+                    "\t-p <number of processors>                (Default 1)\n"
+                    "\t-m <memory size in MB>                   (Default 512MB)\n"
+                    "\t-t <tty type>                            (0 = stdio, 1 = pty (default))\n"
                     "\n\tSpecify multiple discs with multiple -d/-c options, in order (max %d)\n",
-                    me, MAX_DISCS);
+                    me, MAX_SHARES, MAX_DISCS);
 }
 
 
@@ -249,8 +281,11 @@ int main(int argc, char *argv[])
         struct disc_info dinfo[MAX_DISCS];
         unsigned int num_discs = 0;
 
+        struct share_info sinfo[MAX_SHARES];
+        unsigned int num_shares = 0;
+
         int ch;
-        while ((ch = getopt(argc, argv, "k:a:i:d:c:b:p:m:t:h")) != -1) {
+        while ((ch = getopt(argc, argv, "k:a:i:d:c:s:b:p:m:t:h")) != -1) {
             switch (ch) {
                 case 'k':
                     kern_path = [NSString stringWithUTF8String:optarg];
@@ -272,6 +307,40 @@ int main(int argc, char *argv[])
                     dinfo[num_discs].readOnly = (ch == 'c');
                     num_discs++;
                     break;
+                case 's':
+                    if (num_shares > MAX_SHARES-1) {
+                        usage(argv[0]);
+                        fprintf(stderr, "\nError: Too many shared directories specified (max %d)\n\n", MAX_SHARES);
+                        return 1;
+                    }
+
+                    NSString *share_string = [NSString stringWithUTF8String:optarg];
+                    NSArray *share_components = [share_string componentsSeparatedByString:@":"];
+
+                    sinfo[num_shares].path = share_components[0];
+                    sinfo[num_shares].tag = [share_components[0] lastPathComponent];
+                    sinfo[num_shares].readOnly = false;
+
+                    if ([share_components count] > 1){
+                        sinfo[num_shares].tag = share_components[1];
+                    }
+                    if ([share_components count] > 2){
+                        if ([share_components[2] isEqualToString:@"ro"]){
+                            sinfo[num_shares].readOnly = true;
+                        } else if (![share_components[2] isEqualToString:@"rw"]){
+                            usage(argv[0]);
+                            fprintf(stderr, "\nError: Third part of share argument must be one of 'rw' and 'ro', but '%s' was given.\n\n", [share_components[2] UTF8String]);
+                            return 1;
+                        }
+                    }
+                    if ([share_components count] > 3){
+                            usage(argv[0]);
+                            fprintf(stderr, "\nError: Share argument should consist of at most three components separated by ':', but %s was given.\n\n", [share_string UTF8String]);
+                            return 1;
+                    }
+                    num_shares++;
+                    break;
+
                 case 'b':
                     eth_if = [NSString stringWithUTF8String:optarg];
                     break;
@@ -323,6 +392,7 @@ int main(int argc, char *argv[])
         VZVirtualMachineConfiguration *conf = getVMConfig(mem, cpus, tty_type, cmdline,
                                                           kern_path, initrd_path,
                                                           dinfo, num_discs,
+                                                          sinfo, num_shares,
                                                           eth_if);
  
         if (!conf) {
