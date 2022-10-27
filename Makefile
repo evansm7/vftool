@@ -3,7 +3,7 @@
 
 FWKS = -framework Foundation \
 	-framework Virtualization
-CFLAGS = -O3
+CFLAGS = -Wall -Werror -Wno-deprecated-declarations -g -O0
 
 all:	prep build/vftool sign
 

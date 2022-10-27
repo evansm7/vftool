@@ -21,12 +21,19 @@
 #include <poll.h>
 #include <util.h>
 
-#define VERSION "v0.3 10/12/2020"
+#define VERSION "v0.4 27/10/2022"
 
-#define MAX_DISCS   8
+#define MAX_DISCS                8
+#define MAX_SHARED_DIRECTORIES   8
 
 struct disc_info {
     NSString    *path;
+    bool        readOnly;
+};
+
+struct shared_directory_info {
+    NSString    *path;
+    NSString    *name;
     bool        readOnly;
 };
 
@@ -87,24 +94,26 @@ static int createPty(bool waitForConnection)
 /* Build VM config.  Returns a VZVirtualMachineConfiguration object* which
  * needs to be externally validated.  Like many of us.
  */
-static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
-                                                  unsigned int nr_cpus,
-                                                  /* 0 stdout/in, 1 pty */
-                                                  unsigned int console_type,
-                                                  NSString *cmdline,
-                                                  NSString *kernel_path,
-                                                  NSString *initrd_path,
-                                                  struct disc_info *dinfo,
-                                                  unsigned int num_discs,
-                                                  NSString *bridged_eth)
+static VZVirtualMachineConfiguration *getVMConfig(
+    unsigned int mem_size_mb,
+    unsigned int nr_cpus,
+    /* 0 stdout/in, 1 pty */
+    unsigned int console_type,
+    NSString *cmdline,
+    NSString *kernel_path,
+    NSString *initrd_path,
+    struct disc_info *dinfo,
+    struct shared_directory_info *sinfo,
+    NSString *sname,
+    unsigned int num_discs,
+    unsigned int num_shared_dirs,
+    NSString *bridged_eth)
 {
     /* **************************************************************** */
     /* Linux bootloader setup:
      */
     NSURL *kernelURL = [NSURL fileURLWithPath:kernel_path];
     NSURL *initrdURL = nil;
-    NSURL *discURL = nil;
-    NSURL *cdromURL = nil;
 
     if (initrd_path)
         initrdURL = [NSURL fileURLWithPath:initrd_path];
@@ -151,7 +160,7 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
     VZVirtioConsoleDeviceSerialPortConfiguration *cons_conf = [[VZVirtioConsoleDeviceSerialPortConfiguration alloc] init];
     [cons_conf setAttachment:spa];
     [conf setSerialPorts:@[cons_conf]];
-
+    
     
     // Network
     NSArray *bni = [VZBridgedNetworkInterface networkInterfaces];
@@ -189,8 +198,7 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
     
 
     // Storage/disc
-    NSArray *discs = @[];
-
+    NSArray *storage_devices = @[];
     for (unsigned int i = 0; i < num_discs; i++) {
         NSString *disc_path = dinfo[i].path;
         NSURL *discURL = [NSURL fileURLWithPath:disc_path];
@@ -202,13 +210,40 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
         if (disc_sda) {
             VZStorageDeviceConfiguration *disc_conf = [[VZVirtioBlockDeviceConfiguration alloc]
                                                        initWithAttachment:disc_sda];
-            discs = [discs arrayByAddingObject:disc_conf];
+            storage_devices = [storage_devices arrayByAddingObject:disc_conf];
         } else {
             NSLog(@"--- Couldn't open disc%d at %@ (URL %@)\n", i, disc_path, discURL);
         }
     }
+    [conf setStorageDevices:storage_devices];
 
-    [conf setStorageDevices:discs];
+    // Shared Directories
+    NSMutableDictionary *directoriesToShare = [NSMutableDictionary dictionary];
+    for (unsigned int i = 0; i < num_shared_dirs; i++) {
+        struct shared_directory_info _sinfo = sinfo[i];
+        // Check if it exists and is a directory
+        BOOL isDir;
+        if (![[NSFileManager defaultManager] fileExistsAtPath:_sinfo.path isDirectory:&isDir] || !isDir) {
+            if (isDir) {
+                NSLog(@"--- Shared directory '%@' is not a directory! Skipping.", _sinfo.path);
+            } else {
+                NSLog(@"--- Shared directory '%@' does not exist! Skipping.", _sinfo.path);
+            }
+            continue;
+        }
+        NSLog(@"+++ Sharing directory %@ as %@\n", _sinfo.path, _sinfo.name);
+        NSURL *sharedDirUrl = [NSURL fileURLWithPath:_sinfo.path];
+        VZSharedDirectory *sd = [[VZSharedDirectory alloc] initWithURL:sharedDirUrl readOnly:_sinfo.readOnly];
+        [directoriesToShare setValue:sd forKey:sinfo[i].name];
+    }
+    if (directoriesToShare.count == 0) {
+        NSLog(@"--- No valid shared directories specified. Skipping.");
+        return conf;
+    }
+    VZMultipleDirectoryShare *mds = [[VZMultipleDirectoryShare alloc] initWithDirectories:directoriesToShare];
+    VZVirtioFileSystemDeviceConfiguration *fs_conf = [[VZVirtioFileSystemDeviceConfiguration alloc] initWithTag:sname];
+    [fs_conf setShare:mds];
+    [conf setDirectorySharingDevices:@[fs_conf]];
 
     return conf;
 }
@@ -223,34 +258,40 @@ static void usage(const char *me)
                     "\t-a <kernel cmdline arguments>\n"
                     "\t-i <initrd path>\n"
                     "\t-d <disc image path>\n"
-                    "\t-c <CDROM image path>            (As -d, but read-only)\n"
-                    "\t-b <bridged ethernet interface>  (Default NAT)\n"
-                    "\t-p <number of processors>        (Default 1)\n"
-                    "\t-m <memory size in MB>           (Default 512MB)\n"
-                    "\t-t <tty type>                    (0 = stdio, 1 = pty (default))\n"
-                    "\n\tSpecify multiple discs with multiple -d/-c options, in order (max %d)\n",
-                    me, MAX_DISCS);
+                    "\t-s <shared directory>\n"
+                    "\t-n <shared directory partition name>     (Defaults to \"shared\")\n"
+                    "\t-c <CDROM image path>                    (As -d, but read-only)\n"
+                    "\t-b <bridged ethernet interface>          (Default NAT)\n"
+                    "\t-p <number of processors>                (Default 1)\n"
+                    "\t-m <memory size in MB>                   (Default 512MB)\n"
+                    "\t-t <tty type>                            (0 = stdio, 1 = pty (default))\n"
+                    "\n\tSpecify multiple discs with multiple -d/-c options, in order (max %d)\n"
+                    "\n\tSpecify multiple shared directories with multiple -s options, in order (max %d)\n"
+                    "\n\tTo mount the shared directories to /mnt, use the following command:\n"
+                    "\t\tmount -t virtiofs <shared directory partition name> /mnt\n\n",
+                    me, MAX_DISCS, MAX_SHARED_DIRECTORIES);
 }
-
 
 int main(int argc, char *argv[])
 {
+    fprintf(stderr, "vftool version " VERSION "\n\n");
     @autoreleasepool {
         NSString *kern_path = NULL;
         NSString *cmdline = NULL;
         NSString *initrd_path = NULL;
-        NSString *disc_path = NULL;
-        NSString *cdrom_path = NULL;
         NSString *eth_if = NULL;
+        NSString *sname = @"shared";
         unsigned int cpus = 0;
         unsigned int mem = 0;
         unsigned int tty_type = 1;
 
         struct disc_info dinfo[MAX_DISCS];
+        struct shared_directory_info sinfo[MAX_SHARED_DIRECTORIES];
         unsigned int num_discs = 0;
+        unsigned int num_shared_directories = 0;
 
         int ch;
-        while ((ch = getopt(argc, argv, "k:a:i:d:c:b:p:m:t:h")) != -1) {
+        while ((ch = getopt(argc, argv, "k:a:i:d:c:s:n:b:p:m:t:h")) != -1) {
             switch (ch) {
                 case 'k':
                     kern_path = [NSString stringWithUTF8String:optarg];
@@ -271,6 +312,40 @@ int main(int argc, char *argv[])
                     dinfo[num_discs].path = [NSString stringWithUTF8String:optarg];
                     dinfo[num_discs].readOnly = (ch == 'c');
                     num_discs++;
+                    break;
+                case 's':
+                    if (num_shared_directories > MAX_SHARED_DIRECTORIES-1) {
+                        usage(argv[0]);
+                        fprintf(stderr, "\nError: Too many shared directories specified (max %d)\n\n", MAX_SHARED_DIRECTORIES);
+                        return 1;
+                    }
+                    sinfo[num_shared_directories].path = [NSString stringWithUTF8String:optarg];
+                    // Check of there is a : in the path.
+                    // If there are none, throw an error.
+                    // If there is one. Split it into the name and path.
+                    // If there are two, split it into the name, path amd read-only flag.
+                    // If there are more than two, throw an error.
+                    NSArray *components = [sinfo[num_shared_directories].path componentsSeparatedByString:@":"];
+                    if ([components count] == 1) {
+                        fprintf(stderr, "\nError: Shared directory must be specified as <name>:<path>\n\n");
+                        return 1;
+                    } else if ([components count] == 2) {
+                        sinfo[num_shared_directories].name = components[0];
+                        sinfo[num_shared_directories].path = components[1];
+                        sinfo[num_shared_directories].readOnly = NO;
+                    } else if ([components count] == 3) {
+                        sinfo[num_shared_directories].name = components[0];
+                        sinfo[num_shared_directories].path = components[1];
+                        sinfo[num_shared_directories].readOnly = [components[2] isEqualToString:@"ro"];
+                    } else {
+                        usage(argv[0]);
+                        fprintf(stderr, "\nError: Shared directory must be specified as <name>:<path>[:ro]\n\n");
+                        return 1;
+                    }
+                    num_shared_directories++;
+                    break;
+                case 'n':
+                    sname = [NSString stringWithUTF8String:optarg];
                     break;
                 case 'b':
                     eth_if = [NSString stringWithUTF8String:optarg];
@@ -322,7 +397,8 @@ int main(int argc, char *argv[])
 
         VZVirtualMachineConfiguration *conf = getVMConfig(mem, cpus, tty_type, cmdline,
                                                           kern_path, initrd_path,
-                                                          dinfo, num_discs,
+                                                          dinfo, sinfo, sname, num_discs,
+                                                          num_shared_directories,
                                                           eth_if);
  
         if (!conf) {
