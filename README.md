@@ -1,3 +1,39 @@
+# Rosetta Support
+
+This fork adds to the Linux guest a virtiofs directory share named `ROSETTA` which contains a single arm64 executable
+named `rosetta`. This executable is an amd64 emulator which uses the native Rosetta functionality on MacOS to execute
+amd64 Linux binaries on the arm64 host (Mac M1, M2, etc.).
+
+To actually make use of it you must explicitly register a custom binfmt handler in the Linux guest by following the
+steps below:
+
+## PREREQUISITES
+The `binfmt-support` Ubuntu package must be installed. This package contains the `update-binfmts` required tool.
+```shell
+% sudo apt install binfmt-support
+```
+
+## INSTALLATION
+```shell
+% mkdir /tmp/rosetta
+% sudo mount -t virtiofs ROSETTA /tmp/rosetta
+% ls /tmp/rosetta rosetta
+% sudo /usr/sbin/update-binfmts --install rosetta /tmp/rosetta/rosetta \
+    --magic "\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00" \
+    --mask "\xff\xff\xff\xff\xff\xfe\xfe\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff" \
+    --credentials yes --preserve no --fix-binary yes
+```
+
+You may see this error on first use of `update-binfmts` but ignore it and repeat the command and it should succeed.
+```
+update-binfmts: warning: unable to close /proc/sys/fs/binfmt_misc/register: No such file or directory
+update-binfmts: warning: unable to enable binary format rosetta
+update-binfmts: exiting due to previous errors
+```
+
+## Original README follows
+
+---
 #  Virtualization.framework tool (vftool)
 
 Here lies a _really minimalist_ and very noddy command-line wrapper to run VMs in the macOS Big Sur Virtualization.framework.

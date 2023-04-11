@@ -210,6 +210,27 @@ static VZVirtualMachineConfiguration *getVMConfig(unsigned int mem_size_mb,
 
     [conf setStorageDevices:discs];
 
+    // expose the Rosetta directory share:
+    NSString *tag = @"ROSETTA";
+
+    NSError *validationError;
+    if (![VZVirtioFileSystemDeviceConfiguration validateTag:tag error:&validationError]) {
+        // Handle validation error here.
+        NSLog(@"-- Configuration validation failure! %@\n", validationError);
+        return nil;
+    }
+
+    VZLinuxRosettaDirectoryShare *rosettaDirectoryShare = [[VZLinuxRosettaDirectoryShare alloc] initWithError:&validationError];
+    if (validationError) {
+        NSLog(@"-- Configuration validation failure! %@\n", validationError);
+        return nil;
+    }
+
+    VZVirtioFileSystemDeviceConfiguration *fileSystemDevice = [[VZVirtioFileSystemDeviceConfiguration alloc] initWithTag:tag];
+    fileSystemDevice.share = rosettaDirectoryShare;
+
+    conf.directorySharingDevices = @[fileSystemDevice];
+
     return conf;
 }
 
