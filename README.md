@@ -1,3 +1,65 @@
+# Rosetta Support for Linux guests
+
+This fork adds a commandline option `-g <rosetta directory share tag>` to specify the name of the directory share tag
+used to expose the Rosetta virtiofs directory share to the arm64 Linux guest. The tag can be any name you choose so long
+as it conforms to virtiofs naming conventions.
+
+The virtiofs directory share contains a single linux/arm64 executable named `rosetta`. This executable is an amd64
+emulator which uses the native Rosetta functionality on MacOS to execute amd64 Linux binaries on the arm64 host
+running Apple Silicon.
+
+To actually make use of it in your arm64 Linux guest you must explicitly register a custom binfmt handler in the arm64
+Linux guest by following the installation steps below.
+
+Example usage of `vftool` with `-g ROSETTA`:
+```shell
+vftool/build/vftool -k vmlinux -i initrd -g ROSETTA -d root.img -d varlibdocker.img -m 8192 -p 6 -t 0 -a "root=/dev/vda" "$@"
+```
+
+## PREREQUISITES
+The `binfmt-support` Ubuntu package must be installed in the arm64 Linux guest; this package contains the required
+`update-binfmts` tool.
+```shell
+% sudo apt install binfmt-support
+```
+
+## INSTALLATION
+Run these commands in your arm64 Linux guest on every boot:
+```shell
+% mkdir /tmp/rosetta
+% sudo mount -t virtiofs ROSETTA /tmp/rosetta
+% sudo /usr/sbin/update-binfmts --install rosetta /tmp/rosetta/rosetta \
+    --magic "\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x3e\x00" \
+    --mask "\xff\xff\xff\xff\xff\xfe\xfe\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff" \
+    --credentials yes --preserve no --fix-binary yes
+```
+
+The token `ROSETTA` in the `mount` command above MUST MATCH the tag name given to vftool `-g` commandline option.
+
+You may see this error on first use of `update-binfmts`; ignore it and repeat the command and it should succeed.
+```
+update-binfmts: warning: unable to close /proc/sys/fs/binfmt_misc/register: No such file or directory
+update-binfmts: warning: unable to enable binary format rosetta
+update-binfmts: exiting due to previous errors
+```
+
+If you intend to use `docker` in the arm64 Linux guest to run containers with the `linux/amd64` platform, it's a good
+idea to set this environment variable in your MacOS host for the MacOS `docker` client to use as a default:
+
+```shell
+export DOCKER_DEFAULT_PLATFORM=linux/amd64
+```
+
+This environment variable could also be specified in the `/lib/systemd/system/docker.service` systemd unit file on the
+arm64 Linux guest by adding this line to the `[Service]` stanza:
+
+```ini
+Environment=DOCKER_DEFAULT_PLATFORM=linux/amd64
+```
+
+## Original README follows
+
+---
 #  Virtualization.framework tool (vftool)
 
 Here lies a _really minimalist_ and very noddy command-line wrapper to run VMs in the macOS Big Sur Virtualization.framework.
