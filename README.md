@@ -1,113 +1,269 @@
-#  Virtualization.framework tool (vftool)
+<div align="center">
 
-Here lies a _really minimalist_ and very noddy command-line wrapper to run VMs in the macOS Big Sur Virtualization.framework.
+# Linux on Mac
 
-Vftool runs Linux virtual machines with virtio block, network, entropy and console devices.  All of the hard work and actual virtualisation is performed by Virtualization.framework -- this wrapper simply sets up configuration objects, describing the VM.
+This project was forked from [evansm7/vftool](https://github.com/evansm7/vftool), which is a simple tool to run virtual machines on macOS using the Virtualization.framework.
 
-It's intended to be the simplest possible invocation of this framework, whilst allowing configuration for:
-- Amount of memory
-- Number of VCPUs
-- Attached disc images, CDROM images (AKA a read-only disc image), or neither
-- Initrd, or no initrd)
-- kernel
-- kernel commandline
+Here you can find a written guide to running Linux virtual machine on macOS.
 
-Tested on an M1-based Mac (running arm64/AArch64 VMs), but should work on Intel Macs too (to run x86 VMs).  Requires macOS >= 11.
+[Before You Begin](#before-you-begin) •
+[Getting Started](#getting-started) •
+[References](#references)
 
-This is _not a GUI-based app_, and this configuration is provided on the command-line.  Note also that Virtualization.framework does not currently provide public interfaces for framebuffers/video consoles/GUI, so the resulting VM will have a (text) console and networking only.  Consider using VNC into your VM, which is quite usable.
+</div>
 
+## Before You Begin
 
-## Building
+Please find the original README from the upstream [here](./docs/VFTOOL.md). I am using Ubuntu Server in this guide, feel free to use your favourite distro.
 
-### In Xcode
-It should be one click, though you may have to set up your (free) developer ID/AppleID developer Team in the "Signing & Capabilities" tab of the project configuration.
+## Getting Started
 
-### Or, from the commandline
+### Pre-requisite
 
-Install the commandline tools (or Xcode proper) and run `make`.
+1. Build the project.
 
-This results in `build/vftool`.  The Makefile applies a code signature and required entitlements without an identity, which should be enough to run on your own machine.  I haven't tested whether this binary will then work on other people's machines.
+   - ```bash
+     make
+     ```
 
+1. Download the image, initrd (initial ramdisk) and kernel from this [site](https://cloud-images.ubuntu.com) into the `build` folder. For example,
 
-## Running
-The following command-line arguments are supported:
+   - ```bash
+     # image
+     jammy-server-cloudimg-amd64.img
+     # initrd
+     ubuntu-22.04-server-cloudimg-arm64-initrd-generic
+     # kernel
+     ubuntu-22.04-server-cloudimg-arm64-vmlinuz-generic
+     ```
 
-~~~
-    -k <kernel path>
-    -a <kernel cmdline arguments>
-    -i <initrd path>
-    -d <disc image path>
-    -c <CDROM image path>
-    -b <bridged ethernet interface>
-    -p <number of processors>
-    -m <memory size in MB>
-    -t <tty type>
-~~~
+1. Unzip the kernel.
 
-Only the `-k` argument is required (for a path to the kernel image), and all other arguments are optional.  The (current) default is 1 CPU, 512MB RAM, "console=hvc0", NAT-based networking, no discs or initrd and creates a pty for the console.
+   - ```bash
+     mv /path/to/kernel /path/to/kernel.gz
+     gunzip /path/to/kernel.gz
+     ```
 
-The `-t` option permits the console to either use stdin/stdout (option `0`), or to create a pseudo terminal (option `1`, the default) and wait for you to attach something to it, as in the example below.  The pseudo terminal (pty) approach gives a useful interactive console (particularly handy for setting up your VM), but stdin/stdout and immediate startup are more useful for launching VMs in a script.
+### Setup the Virtual Machine
 
-Multiple disc images can be attached by using several `-d` or `-c` options.  The discs are attached in the order they are given on the command line, which should then influence which device they appear as.  For example, `-d foo -d bar -c blah` will create three virtio-blk devices, `/dev/vda`, `/dev/vdb`, `/dev/vdc` attached to _foo_, _bar_ and _blah_ respectively.  Up to 8 discs can be attached.
+1. First, start the virtual machine without specifying a root. This allows us to run some basic setup such as **creating a root mount point**, **disabling cloud init**, **setting a root password** and a **static IP**.
 
-The kernel should be uncompressed.  The initrd may be a gz.  Disc images are raw/flat files (nothing fancy like qcow2).
+   - ```bash
+     ./vftool \
+	   -k /path/to/kernel \
+	   -i /path/to/initrd \
+	   -d /path/to/image \
+	   -m 8192 \
+	   -a "console=hvc0" 
+     ```
 
-When starting vftool, you will see output similar to:
+1. Look for the indicated terminal input device (e.g. `Waiting for connection to:  /dev/ttys001`), and connect to it from another terminal session.
 
-~~~
-2020-11-25 02:14:33.883 vftool[86864:707935] vftool (v0.1 25/11/2020) starting
-2020-11-25 02:14:33.884 vftool[86864:707935] +++ kernel at file:///Users/matt/vm/debian/Image-5.9, initrd at (null), cmdline 'console=hvc0 root=/dev/vda1', 2 cpus, 4096MB memory
-2020-11-25 02:14:33.884 vftool[86864:707935] +++ fd 3 connected to /dev/ttys016
-2020-11-25 02:14:33.884 vftool[86864:707935] +++ Waiting for connection to:  /dev/ttys016
-~~~
+   - ```bash
+     screen /dev/ttys001
+     ```
 
-vftool is now waiting for a connection to the VM's console -- in this example, it's created `/dev/ttys016` for this.  Continue by attaching to this in another terminal:
+1. Wait for the virtual machine to finish booting up with `initramfs` prompt.
 
-~~~
-    screen /dev/ttys016
-~~~
+   - ```bash
+     ...
+     ...
+     ...
+     (initramfs)
+     ```
 
-Note this provides an accurate terminal to your guest, as far as Terminal/screen provide.
+1. Create a root mount point.
 
-At this point, vftool starts the VM.  (Well, vftool validates some items after this point, so if your disc images don't exist then you'll find out now.)
+   - ```bash
+     mkdir /mnt
+     mount /dev/vda /mnt
+     chroot /mnt
+     ```
 
+1. Disable clout init.
 
-## Kernels/notes
+   - ```bash
+     touch /etc/cloud/cloud-init.disabled
+     ```
 
-An example working commandline is:
-~~~
-    vftool -k ~/vm/debian/Image-5.9 -d ~/vm/debian/arm64_debian.img  -p 2 -m 4096 -a "console=hvc0 root=/dev/vda1"
-~~~
+1. Set the root password to `root`.
 
-I've used a plain/defconfig Linux 5.9 build (not gzipped):
-~~~
-    $ file Image-5.9
-    Image-5.9: Linux kernel ARM64 boot executable Image, little-endian, 4K pages
-~~~
+   - ```bash
+     echo 'root:root' | chpasswd
+     ```
 
-Note that Virtualization.framework provides all IO as virtio-pci, including the console (i.e. not a UART).  The debian install kernel does not have virtio drivers, unfortunately.  I ended up using debootstrap (`--foreign`) to install to a disc image on a Linux box... but I hear good things about Fedora etc.
+1. Set a static IP.
 
+   - ```bash
+     cat <<EOF> /etc/netplan/01-dhcp.yaml
+     network:
+       ethernets:
+         enp0s1:
+           dhcp4: true
+           addresses: [192.168.64.18/20]
+       version: 2
+     EOF
+     ```
 
-## Networking and entitlements
+1. Exit and unmount.
 
-The `-b` option uses a `VZBridgedNetworkDeviceAttachment` to configure a bridged network interface instead of the default 'NAT' interface.  *This does not currently work*.
+   - ```bash
+     exit
+     umount /dev/vda
+     ```
 
-The bridging requires the binary to have the  `com.apple.vm.networking` entitlement, and Apple docs helpfully give this note:
+1. Manually kill the virtual machine with `Ctrl+C` from the original terminal session.
 
-> Note
-> This entitlement is restricted to developers of virtualization software. To request this entitlement, contact your Apple representative.
+### Allocating Storage Space
 
-This seems to be saying that one requires a paid developer account *and* to ask nicely to be able to use this OS feature.  (Rolls eyes)
+1. Allocate storage space to the virtual machine by resizing the image. In this example, I am allocating 32GB to the virtual machine.
 
-Fortunately, the "NAT" default works fine for the outgoing direction, and even permits *incoming* connections -- it appears to be kernel-level NAT from a bridged interface instead of the user-level TCP/IP stuff as used in QEMU.  I end up with a host-side `bridge100` network interface with IP `192.168.64.1` and my guests get `192.168.64.x` addresses which are reachable from the host.  So, at least one can SSH/VNC into guests!
+   - ```bash
+     dd if=/dev/zero bs=1m count=32000 >> /path/to/image
+     ```
 
+1. Start the virtual machine with a root specified this time.
 
-## Issues
+   - ```bash
+     ./vftool \
+	   -k /path/to/kernel \
+	   -i /path/to/initrd \
+	   -d /path/to/image \
+	   -p 4 \
+	   -m 8192 \
+	   -a "root=/dev/vda rw console=hvc0" 
+     ```
 
-Folks have reported problems (I believe with the pty setup) when running in tmux.
+1. Repeat **Step 2** in [Setup the Virtual Machine](#setup-the-virtual-machine) and login as `root`.
 
+1. Check if the image resizing worked.
+
+   - ```bash
+     df -h | grep vda
+     ```
+
+1. If the size is not what specified in **Step 1**, check if the `dd` command worked.
+
+   - ```bash
+     parted
+     (parted) print devices
+     (parted) quit
+     ```
+
+1. If `/dev/vda/` shows the correct size allocated in **Step 1**, resize the partition to the max.
+
+   - ```bash
+     resize2fs /dev/vda
+     ```
+
+1. Repeat **Step 4**, and you should now see the correct allocated size for `/dev/vda`.
+
+### Create a New User
+
+1. Before we continue any further, instead of using `root` to access the virtual machine, let's create a new user and set a password.
+
+   - ```bash
+     adduser <YOUR_USERNAME>
+     ```
+
+1. Add this user to the `sudo` group.
+
+   - ```bash
+     usermod -aG sudo <YOUR_USERNAME>
+     ```
+
+1. Login as the new user.
+
+   - ```bash
+     su - <YOUR_USERNAME>
+     ```
+
+### Setup SSH
+
+My intention here is to use the [remote development](https://code.visualstudio.com/docs/remote/ssh) feature from the IDE.
+
+1. Re-install `openssh-server`.
+
+   - ```bash
+     sudo apt update
+     sudo apt --reinstall install openssh-server
+     ```
+
+1. Disable the `ssh.socket`.
+
+   - ```bash
+     sudo systemctl disable ssh.socket --now
+     ```
+
+1. Enable the `ssh.service`.
+
+   - ```bash
+     sudo systemctl enable ssh.service --now
+     ```
+
+1. Assert that the `ssh.service` is enabled and running.
+
+   - ```bash
+     sudo systemctl status sshd
+     ```
+
+1. On your local machine, [generate a SSH key](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent#generating-a-new-ssh-key) and add the public key to the `~/.ssh/authorized_keys` file in the virtual machine.
+
+1. Now you should be able to SSH into the virtual machine using the static IP specified in **Step 7** of [Setup the Virtual Machine](#setup-the-virtual-machine).
+
+   - ```bash
+     ssh -i /path/to/private-key <YOUR_USERNAME>@192.168.64.18
+     ```
+
+### Setup Docker (Optional)
+
+1. Install a few prerequisite packages.
+
+   - ```bash
+     sudo apt update
+     sudo apt install apt-transport-https ca-certificates curl software-properties-common
+     ```
+
+1. Add Docker repository to APT sources:
+
+   - ```bash
+     curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+     ```
+
+1. Install `docker-ce`.
+
+   - ```bash
+     sudo apt update
+     apt-cache policy docker-ce
+     sudo apt install docker-ce
+     ```
+
+1. Assert that `docker` is enabled and running.
+
+   - ```bash
+     sudo systemctl status docker
+     ```
+
+1. Assert that images can be downloaded from the Docker hub.
+
+   - ```bash
+     docker run --rm hello-world
+     ```
+
+### Setup Virtual Host (Optional)
+
+1. A static IP was set in **Step 7** of [Setup the Virtual Machine](#setup-the-virtual-machine).
+
+1. On your local machine, point this IP to your favourite hostname in the `/etc/hosts` file. For example:
+
+   - ```
+     192.168.64.18  your.favourite.hostname
+     ```
+
+1. Now you can access the virtual machine using this hostname.
 
 ## References
--   KhaosT's SimpleVM is a Swift wrapper for Virtualization.framework:  https://github.com/KhaosT/SimpleVM  This does roughly the same thing as vftool, but has a friendlier GUI.  vftool has a little more flexibility in configuration (without hacking sources) and I personally prefer the text-based terminal approach.
--   [https://developer.apple.com/documentation/virtualization?language=objc]
 
+* [Setting up Linux VM on Apple Silicon for Docker](https://piyush-agrawal.medium.com/setting-up-linux-vm-on-apple-silicon-for-docker-e5b9924fd09)
+* [How To Install and Use Docker on Ubuntu 22.04](https://www.digitalocean.com/community/tutorials/how-to-install-and-use-docker-on-ubuntu-22-04)
